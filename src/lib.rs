@@ -1,9 +1,8 @@
 use std::borrow::BorrowMut;
-use std::intrinsics::mir::CastPtrToPtr;
-use std::ptr::{null, null_mut};
+use std::ptr::null_mut;
 
 use vstd::layout::layout_for_type_is_valid;
-use vstd::{compute, prelude::*};
+use vstd::prelude::*;
 
 use vstd::raw_ptr::{
     allocate, deallocate, ptr_mut_read, ptr_mut_write, ptr_null_mut, ptr_ref, Dealloc, PointsTo,
