@@ -20,45 +20,68 @@ struct LNode<T> {
 struct LinkedList<T> {
     head: *mut LNode<T>,
     tail: *mut LNode<T>,
-    tokens: Tracked<Seq<PointsTo<LNode<T>>>>,
-    dealloc: Tracked<Seq<Dealloc>>,
+    tokens: Tracked<Seq<PermData<T>>>,
+}
+
+tracked struct PermData<T> {
+    access: PointsTo<LNode<T>>,
+    dealloc: Dealloc,
+}
+
+impl<T> PermData<T> {
+    spec fn valid(&self) -> bool {
+        &&& self.access.is_init()
+        &&& self.dealloc.addr() == self.access.ptr()@.addr
+        &&& self.dealloc.provenance() == self.access.ptr()@.provenance
+        &&& self.dealloc.size() == size_of::<LNode<T>>()
+        &&& self.dealloc.align() == align_of::<LNode<T>>()
+    }
+
+    spec fn next(&self) -> *mut LNode<T> {
+        self.access.value().next
+    }
+
+    spec fn prev(&self) -> *mut LNode<T> {
+        self.access.value().prev
+    }
+
+    spec fn ptr(&self) -> *mut LNode<T> {
+        self.access.ptr()
+    }
+
+    spec fn value(&self) -> T {
+        self.access.value().value
+    }
 }
 
 impl<T> LinkedList<T> {
     spec fn wf_perm(&self, i: int) -> bool {
         &&& if i + 1 < self@.len() {
-            &&& self.tokens@[i].value().next == self.tokens@[i + 1].ptr()
-            &&& self.tokens@[i].value().next@.addr != 0
+            &&& self.tokens@[i].next() == self.tokens@[i + 1].ptr()
+            &&& self.tokens@[i].next()@.addr != 0
         } else {
-            &&& self.tokens@[i].value().next@.addr == 0
+            &&& self.tokens@[i].next()@.addr == 0
             &&& self.tail == self.tokens@[i].ptr()
         }
         &&& if i > 0 {
-            &&& self.tokens@[i].value().prev == self.tokens@[i - 1].ptr()
-            &&& self.tokens@[i].value().prev@.addr != 0
+            &&& self.tokens@[i].prev() == self.tokens@[i - 1].ptr()
+            &&& self.tokens@[i].prev()@.addr != 0
         } else {
-            &&& self.tokens@[i].value().prev@.addr == 0
+            &&& self.tokens@[i].prev()@.addr == 0
             &&& self.head == self.tokens@[i].ptr()
         }
-        &&& self.tokens@[i].is_init()
-        &&& self.dealloc@[i].addr() == self.tokens@[i].ptr()@.addr
-        &&& self.dealloc@[i].provenance() == self.tokens@[i].ptr()@.provenance
-        &&& self.dealloc@[i].size() == size_of::<LNode<T>>()
-        &&& self.dealloc@[i].align() == align_of::<LNode<T>>()
+        &&& self.tokens@[i].valid()
     }
 
     pub closed spec fn wf(&self) -> bool {
         &&& forall |i: int| 0 <= i < self.tokens@.len() ==> self.wf_perm(i)
-        &&& self.dealloc@.len() == self.tokens@.len()
         &&& self.head@.addr != 0 <==> self.tokens@.len() > 0
-        &&& self.head@.addr != 0 ==> self.head == self.tokens@.first().ptr()
         &&& self.tail@.addr != 0 <==> self.tokens@.len() > 0
-        &&& self.tail@.addr != 0 ==> self.tail == self.tokens@.last().ptr()
     }
 
     pub closed spec fn view(&self) -> Seq<T>
     {
-        self.tokens@.map_values(|t: PointsTo<LNode<T>>| t.value().value)
+        self.tokens@.map_values(|t: PermData<T>| t.value())
     }
 
     pub fn new() -> (r: Self)
@@ -68,7 +91,6 @@ impl<T> LinkedList<T> {
             head: null_mut(),
             tail: null_mut(),
             tokens: Tracked(Seq::tracked_empty()),
-            dealloc: Tracked(Seq::tracked_empty())
         }
     }
 
@@ -94,16 +116,15 @@ impl<T> LinkedList<T> {
         }
         else {
             assert(self.wf_perm(0));
-            let tracked next_perm = self.tokens.borrow_mut().tracked_pop_front();
-            let mut next_node: LNode<T> = ptr_mut_read(self.head, Tracked(&mut next_perm));
+            let tracked PermData { access, dealloc } = self.tokens.borrow_mut().tracked_pop_front();
+            let mut next_node: LNode<T> = ptr_mut_read(self.head, Tracked(&mut access));
             next_node.prev = ptr;
-            ptr_mut_write(self.head, Tracked(&mut next_perm), next_node);
-            let tracked _ = self.tokens.borrow_mut().tracked_insert(0, next_perm);
+            ptr_mut_write(self.head, Tracked(&mut access), next_node);
+            let tracked _ = self.tokens.borrow_mut().tracked_insert(0, PermData { access, dealloc });
         }
 
         self.head = ptr;
-        let tracked _ = self.tokens.borrow_mut().tracked_insert(0, perm);
-        let tracked _ = self.dealloc.borrow_mut().tracked_insert(0, dealloc_perm);
+        let tracked _ = self.tokens.borrow_mut().tracked_insert(0, PermData { access: perm, dealloc: dealloc_perm });
 
         assert forall |i: int| 0 < i < self.tokens@.len()
         implies self.wf_perm(i)
@@ -118,16 +139,15 @@ impl<T> LinkedList<T> {
         self@ == old(self)@.drop_last(),
     {
         assert(self.wf_perm(self@.len() - 1));
-        let tracked perm = self.tokens.borrow_mut().tracked_pop();
-        let node = ptr_mut_read(self.tail, Tracked(&mut perm));
+        let tracked PermData { access, dealloc } = self.tokens.borrow_mut().tracked_pop();
+        let node = ptr_mut_read(self.tail, Tracked(&mut access));
 
-        let tracked dealloc_perm = self.dealloc.borrow_mut().tracked_pop();
         deallocate(
             self.tail as _,
             size_of::<LNode<T>>(),
             align_of::<LNode<T>>(),
-            Tracked(perm.into_raw()),
-            Tracked(dealloc_perm)
+            Tracked(access.into_raw()),
+            Tracked(dealloc)
         );
 
         self.tail = node.prev;
@@ -138,11 +158,11 @@ impl<T> LinkedList<T> {
         }
         else {
             assert(old(self).wf_perm(old(self)@.len() - 2));
-            let tracked prev_perm = self.tokens.borrow_mut().tracked_pop();
-            let mut prev = ptr_mut_read(self.tail, Tracked(&mut prev_perm));
+            let tracked PermData { access, dealloc } = self.tokens.borrow_mut().tracked_pop();
+            let mut prev = ptr_mut_read(self.tail, Tracked(&mut access));
             prev.next = null_mut();
-            ptr_mut_write(self.tail, Tracked(&mut prev_perm), prev);
-            let tracked _ = self.tokens.borrow_mut().tracked_push(prev_perm);
+            ptr_mut_write(self.tail, Tracked(&mut access), prev);
+            let tracked _ = self.tokens.borrow_mut().tracked_push(PermData { access, dealloc });
 
             assert forall |i: int| 0 <= i < self.tokens@.len()
             implies self.wf_perm(i)
@@ -164,7 +184,7 @@ impl<T> LinkedList<T> {
         else {
             assert(self.wf_perm(self@.len() - 1));
             let tracked perm = self.tokens.borrow().tracked_borrow(self.tokens@.len() - 1);
-            Some(&ptr_ref::<LNode<T>>(self.tail as _, Tracked(perm)).value)
+            Some(&ptr_ref::<LNode<T>>(self.tail as _, Tracked(&perm.access)).value)
         }
     }
 
