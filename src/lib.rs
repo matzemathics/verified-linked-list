@@ -78,8 +78,7 @@ impl<T> LinkedList<T> {
         &&& self.tail@.addr != 0 <==> self.tokens@.len() > 0
     }
 
-    pub closed spec fn view(&self) -> Seq<T>
-    {
+    pub closed spec fn view(&self) -> Seq<T> {
         self.tokens@.map_values(|t: PermData<T>| t.value())
     }
 
@@ -93,24 +92,38 @@ impl<T> LinkedList<T> {
         }
     }
 
+    fn allocate_node(val: LNode<T>) -> (res: (*mut LNode<T>, Tracked<PermData<T>>))
+    ensures
+        res.0@.addr != 0,
+        res.0 == res.1@.ptr(),
+        res.1@.access.value() == val,
+        res.1@.valid()
+    {
+        layout_for_type_is_valid::<LNode<T>>();
+        assume(size_of::<LNode<T>>() != 0);
+        let (ptr, Tracked(raw_perm), Tracked(dealloc)) = allocate(size_of::<LNode<T>>(), align_of::<LNode<T>>());
+
+        let tracked access = raw_perm.into_typed::<LNode<T>>(ptr.addr());
+        let ptr: *mut LNode<T> = ptr as _;
+        let tracked _ = access.is_nonnull();
+
+        ptr_mut_write(ptr, Tracked(&mut access), val);
+        (ptr, Tracked(PermData { access, dealloc }))
+    }
+
     pub fn push_front(&mut self, value: T)
     requires old(self).wf()
     ensures
         self.wf(),
         self@ == old(self)@.insert(0, value)
     {
-        layout_for_type_is_valid::<LNode<T>>();
-        assume(size_of::<LNode<T>>() != 0);
-        let (ptr, Tracked(raw_perm), Tracked(dealloc_perm)) = allocate(size_of::<LNode<T>>(), align_of::<LNode<T>>());
+        let (ptr, Tracked(pd)) = Self::allocate_node(LNode {
+            value,
+            prev: null_mut(),
+            next: self.head,
+        });
 
-        let tracked perm = raw_perm.into_typed::<LNode<T>>(ptr.addr());
-        let ptr: *mut LNode<T> = ptr as _;
-        let tracked _ = perm.is_nonnull();
-
-        let new_node = LNode { next: self.head, prev: null_mut(), value };
-        ptr_mut_write(ptr, Tracked(&mut perm), new_node);
-
-        if self.head as usize == 0 {
+        if self.tail as usize == 0 {
             self.tail = ptr;
         }
         else {
@@ -123,11 +136,43 @@ impl<T> LinkedList<T> {
         }
 
         self.head = ptr;
-        let tracked _ = self.tokens.borrow_mut().tracked_insert(0, PermData { access: perm, dealloc: dealloc_perm });
+        let tracked _ = self.tokens.borrow_mut().tracked_insert(0, pd);
 
         assert forall |i: int| 0 < i < self.tokens@.len()
         implies self.wf_perm(i)
         by { assert(old(self).wf_perm(i - 1)); };
+    }
+
+    pub fn push_back(&mut self, value: T)
+    requires old(self).wf()
+    ensures
+        self.wf(),
+        self@ == old(self)@.push(value)
+    {
+        let (ptr, Tracked(pd)) = Self::allocate_node(LNode {
+            value,
+            prev: self.tail,
+            next: null_mut(),
+        });
+
+        if self.head as usize == 0 {
+            self.head = ptr;
+        }
+        else {
+            assert(self.wf_perm(self@.len() - 1));
+            let tracked PermData { access, dealloc } = self.tokens.borrow_mut().tracked_pop();
+            let mut prev_node: LNode<T> = ptr_mut_read(self.tail, Tracked(&mut access));
+            prev_node.next = ptr;
+            ptr_mut_write(self.tail, Tracked(&mut access), prev_node);
+            let tracked _ = self.tokens.borrow_mut().tracked_push(PermData { access, dealloc });
+        }
+
+        self.tail = ptr;
+        let tracked _ = self.tokens.borrow_mut().tracked_push(pd);
+
+        assert forall |i: int| 0 <= i < self.tokens@.len() - 1
+        implies self.wf_perm(i)
+        by { assert(old(self).wf_perm(i)); };
     }
 
     pub fn pop_back(&mut self) -> (value: T)
