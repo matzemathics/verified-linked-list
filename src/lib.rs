@@ -50,13 +50,12 @@ decreases seq.len()
 }
 
 proof fn lemma_backward_linked_after_push_front<T>(
-    tail: *mut LNode<T>,
     pre: Seq<PointsTo<LNode<T>>>,
     new: PointsTo<LNode<T>>,
     post: Seq<PointsTo<LNode<T>>>,
 )
 requires
-    backward_linked(tail, pre),
+    backward_linked(pre.last().ptr(), pre),
     new.ptr()@.addr != 0,
     new.is_init(),
     new.value().prev@.addr == 0,
@@ -67,7 +66,7 @@ requires
     post[0].value().prev == new.ptr(),
     post.remove(0) == pre.remove(0)
 ensures
-    backward_linked(tail, post.insert(0, new))
+    backward_linked(pre.last().ptr(), post.insert(0, new))
 decreases
     pre.len()
 {
@@ -78,15 +77,17 @@ decreases
         assert(post.drop_last().remove(0) == post.remove(0).drop_last());
 
         let prev = pre.last().value().prev;
-        lemma_backward_linked_after_push_front(prev, pre.drop_last(), new, post.drop_last());
+        assert(backward_linked(prev, pre.drop_last()));
+        assert(pre.drop_last().last().ptr() == prev);
+        lemma_backward_linked_after_push_front(pre.drop_last(), new, post.drop_last());
         assert(post.drop_last().insert(0, new) == post.insert(0, new).drop_last());
         assert(backward_linked(prev, post.drop_last().insert(0, new)));
-        assert(backward_linked(tail, post.insert(0, new)));
+        assert(backward_linked(pre.last().ptr(), post.insert(0, new)));
     }
     else {
-        assert(tail == post[0].ptr());
+        assert(pre.last().ptr() == post.first().ptr());
         assert(backward_linked(new.value().prev, seq![new].drop_last()));
-        assert(backward_linked(post[0].value().prev, seq![new]));
+        assert(backward_linked(post.first().value().prev, seq![new]));
         assert(post.insert(0, new).drop_last() == seq![new]);
     }
 }
@@ -175,7 +176,7 @@ impl<T> LinkedList<T> {
             assert(forward_linked(self.head, self.tokens@));
 
             let tracked _ = lemma_backward_linked_after_push_front(
-                self.tail, old(self).tokens@, perm, self.tokens@);
+                old(self).tokens@, perm, self.tokens@);
         }
 
         self.head = ptr;
