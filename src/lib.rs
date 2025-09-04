@@ -6,7 +6,7 @@ use vstd::layout::layout_for_type_is_valid;
 use vstd::{compute, prelude::*};
 
 use vstd::raw_ptr::{
-    allocate, deallocate, ptr_mut_read, ptr_mut_write, ptr_null_mut, Dealloc, PointsTo,
+    allocate, deallocate, ptr_mut_read, ptr_mut_write, ptr_null_mut, ptr_ref, Dealloc, PointsTo,
 };
 
 verus! {
@@ -255,6 +255,22 @@ impl<T> LinkedList<T> {
 
         node.value
     }
+
+    pub fn peek_back(&self) -> (result: Option<&T>)
+    requires self.wf()
+    ensures
+        match result {
+            Some(value) => value == self@.last() && self@.len() > 0,
+            None => self@.len() == 0
+        }
+    {
+        if self.tail as usize == 0 { None }
+        else {
+            let tracked perm = self.tokens.borrow().tracked_borrow(self.tokens@.len() - 1);
+            Some(&ptr_ref::<LNode<T>>(self.tail as _, Tracked(perm)).value)
+        }
+    }
+
 }
 
 } // verus!
