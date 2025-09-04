@@ -5,7 +5,9 @@ use std::ptr::{null, null_mut};
 use vstd::layout::layout_for_type_is_valid;
 use vstd::{compute, prelude::*};
 
-use vstd::raw_ptr::{allocate, ptr_mut_read, ptr_mut_write, ptr_null_mut, PointsTo};
+use vstd::raw_ptr::{
+    allocate, deallocate, ptr_mut_read, ptr_mut_write, ptr_null_mut, Dealloc, PointsTo,
+};
 
 verus! {
 
@@ -18,7 +20,20 @@ struct LNode<T> {
 struct LinkedList<T> {
     head: *mut LNode<T>,
     tail: *mut LNode<T>,
-    tokens: Tracked<Seq<PointsTo<LNode<T>>>>
+    tokens: Tracked<Seq<PointsTo<LNode<T>>>>,
+    dealloc: Tracked<Seq<Dealloc>>,
+}
+
+spec fn dealloc_condition<T>(dealloc: Dealloc, token: PointsTo<LNode<T>>) -> bool {
+    &&& dealloc.size() == size_of::<LNode<T>>()
+    &&& dealloc.align() == align_of::<LNode<T>>()
+    &&& dealloc.addr() == token.ptr()@.addr
+    &&& dealloc.provenance() == token.ptr()@.provenance
+}
+
+spec fn dealloc_tokens<T>(dealloc: Seq<Dealloc>, tokens: Seq<PointsTo<LNode<T>>>) -> bool
+{
+    forall |i: int| 0 <= i < tokens.len() ==> dealloc_condition(#[trigger] dealloc[i], tokens[i])
 }
 
 spec fn forward_linked<T>(ptr: *mut LNode<T>, seq: Seq<PointsTo<LNode<T>>>) -> bool
@@ -133,6 +148,8 @@ impl<T> LinkedList<T> {
     pub closed spec fn wf(&self) -> bool {
         &&& forward_linked(self.head, self.tokens@)
         &&& backward_linked(self.tail, self.tokens@)
+        &&& dealloc_tokens(self.dealloc@, self.tokens@)
+        &&& self.dealloc@.len() == self.tokens@.len()
     }
 
     pub closed spec fn view(&self) -> Seq<T>
@@ -177,11 +194,16 @@ impl<T> LinkedList<T> {
 
             let tracked _ = lemma_backward_linked_after_push_front(
                 old(self).tokens@, perm, self.tokens@);
+
+            assert(dealloc_condition(self.dealloc@.first(), self.tokens@.first()));
         }
 
         self.head = ptr;
         assert(self.tokens@.insert(0, perm).remove(0) =~= self.tokens@);
         let tracked _ = self.tokens.borrow_mut().tracked_insert(0, perm);
+        let tracked _ = self.dealloc.borrow_mut().tracked_insert(0, dealloc_perm);
+
+        assert(dealloc_condition(dealloc_perm, perm));
     }
 
     pub fn pop_back(&mut self) -> (value: Option<T>)
@@ -205,6 +227,15 @@ impl<T> LinkedList<T> {
         else {
             let tracked perm = self.tokens.borrow_mut().tracked_pop();
             let node = ptr_mut_read(self.tail, Tracked(&mut perm));
+
+            let tracked dealloc_perm = self.dealloc.borrow_mut().tracked_pop();
+            deallocate(
+                self.tail as _,
+                size_of::<LNode<T>>(),
+                align_of::<LNode<T>>(),
+                Tracked(perm.into_raw()),
+                Tracked(dealloc_perm)
+            );
 
             self.tail = node.prev;
             assert(backward_linked(self.tail, self.tokens@));
