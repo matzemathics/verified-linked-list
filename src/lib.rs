@@ -157,6 +157,17 @@ impl<T> LinkedList<T> {
         self.tokens@.map_values(|t: PointsTo<LNode<T>>| t.value().value)
     }
 
+    pub fn new() -> (r: Self)
+    ensures r.wf(), r@.len() == 0
+    {
+        LinkedList {
+            head: null_mut(),
+            tail: null_mut(),
+            tokens: Tracked(Seq::tracked_empty()),
+            dealloc: Tracked(Seq::tracked_empty())
+        }
+    }
+
     pub fn push_front(&mut self, value: T)
     requires old(self).wf()
     ensures
