@@ -206,57 +206,43 @@ impl<T> LinkedList<T> {
         assert(dealloc_condition(dealloc_perm, perm));
     }
 
-    pub fn pop_back(&mut self) -> (value: Option<T>)
-    requires old(self).wf()
+    pub fn pop_back(&mut self) -> (value: T)
+    requires old(self).wf(), old(self)@.len() > 0
     ensures
         self.wf(),
-        match value {
-            Some(value) => {
-                &&& value == old(self)@.last()
-                &&& self@ == old(self)@.drop_last()
-            }
-            None => {
-                &&& old(self)@ == self@
-                &&& self@.len() == 0
-            }
-        }
+        value == old(self)@.last(),
+        self@ == old(self)@.drop_last(),
     {
-        if self.head as usize == 0 {
-            None
+        let tracked perm = self.tokens.borrow_mut().tracked_pop();
+        let node = ptr_mut_read(self.tail, Tracked(&mut perm));
+
+        let tracked dealloc_perm = self.dealloc.borrow_mut().tracked_pop();
+        deallocate(
+            self.tail as _,
+            size_of::<LNode<T>>(),
+            align_of::<LNode<T>>(),
+            Tracked(perm.into_raw()),
+            Tracked(dealloc_perm)
+        );
+
+        self.tail = node.prev;
+        assert(backward_linked(self.tail, self.tokens@));
+
+        if self.tail as usize == 0 {
+            self.head = null_mut();
         }
         else {
-            let tracked perm = self.tokens.borrow_mut().tracked_pop();
-            let node = ptr_mut_read(self.tail, Tracked(&mut perm));
+            let tracked prev_perm = self.tokens.borrow_mut().tracked_pop();
+            let mut prev = ptr_mut_read(self.tail, Tracked(&mut prev_perm));
+            prev.next = null_mut();
+            ptr_mut_write(self.tail, Tracked(&mut prev_perm), prev);
+            let tracked _ = self.tokens.borrow_mut().tracked_push(prev_perm);
 
-            let tracked dealloc_perm = self.dealloc.borrow_mut().tracked_pop();
-            deallocate(
-                self.tail as _,
-                size_of::<LNode<T>>(),
-                align_of::<LNode<T>>(),
-                Tracked(perm.into_raw()),
-                Tracked(dealloc_perm)
-            );
-
-            self.tail = node.prev;
-            assert(backward_linked(self.tail, self.tokens@));
-
-            if self.tail as usize == 0 {
-                self.head = null_mut();
-            }
-            else {
-                let tracked prev_perm = self.tokens.borrow_mut().tracked_pop();
-                let mut prev = ptr_mut_read(self.tail, Tracked(&mut prev_perm));
-                prev.next = null_mut();
-                ptr_mut_write(self.tail, Tracked(&mut prev_perm), prev);
-                let tracked _ = self.tokens.borrow_mut().tracked_push(prev_perm);
-
-                assert(self.tokens@.drop_last() == old(self).tokens@.drop_last().drop_last());
-                let tracked _ = lemma_forward_linked_after_pop_back(old(self).tokens@, self.tokens@);
-                assert(forward_linked(self.head, self.tokens@));
-            }
-
-            Some(node.value)
+            assert(self.tokens@.drop_last() =~= old(self).tokens@.drop_last().drop_last());
+            let tracked _ = lemma_forward_linked_after_pop_back(old(self).tokens@, self.tokens@);
         }
+
+        node.value
     }
 }
 
