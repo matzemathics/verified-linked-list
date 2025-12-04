@@ -8,7 +8,7 @@ use vstd::raw_ptr::{
 };
 
 #[cfg(verus_keep_ghost)]
-use vstd::raw_ptr::ptr_null_mut; 
+use vstd::raw_ptr::ptr_null_mut;
 
 verus! {
 
@@ -59,7 +59,7 @@ impl<T> PermData<T> {
 impl<T> LinkedList<T> {
     spec fn next_link(&self, i: int) -> bool {
         if i + 1 < self@.len() {
-            &&& self._tokens@[i].next() == self.tokens@[i + 1].ptr()
+            &&& self._tokens@[i].next() == self._tokens@[i + 1].ptr()
         } else {
             &&& self._tokens@[i].next()@.addr == 0
             &&& self.tail == self._tokens@[i].ptr()
@@ -261,4 +261,3 @@ impl<T> LinkedList<T> {
 }
 
 } // verus!
-
